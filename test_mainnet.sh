@@ -155,7 +155,7 @@ fi
 # Record start time
 start_time=$(date +%s)
 
-RUST_LOG=DEBUG ./target/release/reth-bsc node \
+RUST_LOG=INFO ./target/release/reth-bsc node \
     --chain=bsc \
     --http --http.api="eth, net, txpool, web3, rpc" \
     --datadir ./fullnode_bsc/data --log.file.directory ./fullnode_bsc/logs \
