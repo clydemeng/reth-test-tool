@@ -2,10 +2,18 @@
 
 # Function to display usage
 usage() {
-    echo "Usage: $0 -n <block_number>"
-    echo "  -n: Specify the tip block number"
+    echo "Usage: $0 [-n <block_number>] [-c <chain>]"
+    echo "  -n: Specify the tip block number (default: 5M)"
     echo "      Examples: 500000, 0.5M, 1M, 5M, 10M, 100K, 2.5M"
     echo "      Supports: exact numbers, K/k for thousands, M/m for millions"
+    echo "  -c: Specify the blockchain network (default: bsc)"
+    echo "      Options: bsc (mainnet), bsc-testnet"
+    echo ""
+    echo "Examples:"
+    echo "  $0                    # Test BSC mainnet with 5M blocks"
+    echo "  $0 -n 1M             # Test BSC mainnet with 1M blocks"
+    echo "  $0 -c bsc-testnet     # Test BSC testnet with 5M blocks"
+    echo "  $0 -n 2M -c bsc-testnet  # Test BSC testnet with 2M blocks"
     exit 1
 }
 
@@ -37,23 +45,35 @@ parse_block_number() {
     esac
 }
 
-# Function to get block hash for given block number by querying BSC mainnet
+# Function to get block hash for given block number by querying BSC network
 get_block_hash() {
     local block_notation=$1
+    local chain=$2
     local block_number=$(parse_block_number "$block_notation")
     
     # Convert to hex
     local block_hex=$(printf "0x%x" "$block_number")
     
-    echo "Querying BSC mainnet for block #$block_number ($block_hex)..." >&2
+    echo "Querying BSC $chain for block #$block_number ($block_hex)..." >&2
     
-    # BSC RPC endpoints (try multiple in case one fails)
-    local rpc_endpoints=(
-        "https://bsc-dataseed.binance.org/"
-        "https://bsc-dataseed1.defibit.io/"
-        "https://bsc-dataseed1.ninicoin.io/"
-        "https://bsc-dataseed2.defibit.io/"
-    )
+    # BSC RPC endpoints based on network
+    local rpc_endpoints=()
+    if [ "$chain" == "bsc-testnet" ]; then
+        rpc_endpoints=(
+            "https://data-seed-prebsc-1-s1.binance.org:8545/"
+            "https://data-seed-prebsc-2-s1.binance.org:8545/"
+            "https://data-seed-prebsc-1-s2.binance.org:8545/"
+            "https://data-seed-prebsc-2-s2.binance.org:8545/"
+        )
+    else
+        # Default to mainnet
+        rpc_endpoints=(
+            "https://bsc-dataseed.binance.org/"
+            "https://bsc-dataseed1.defibit.io/"
+            "https://bsc-dataseed1.ninicoin.io/"
+            "https://bsc-dataseed2.defibit.io/"
+        )
+    fi
     
     for rpc_url in "${rpc_endpoints[@]}"; do
         echo "Trying RPC endpoint: $rpc_url" >&2
@@ -88,11 +108,16 @@ get_block_hash() {
 }
 
 # Parse command line arguments
-block_number=""
-while getopts "n:h" opt; do
+block_number="5M"  # Default to 5M blocks
+chain="bsc"        # Default to mainnet
+
+while getopts "n:c:h" opt; do
     case $opt in
         n)
             block_number="$OPTARG"
+            ;;
+        c)
+            chain="$OPTARG"
             ;;
         h)
             usage
@@ -103,14 +128,14 @@ while getopts "n:h" opt; do
     esac
 done
 
-# Check if block number is provided
-if [ -z "$block_number" ]; then
-    echo "Error: Block number (-n) is required"
+# Validate chain parameter
+if [[ "$chain" != "bsc" && "$chain" != "bsc-testnet" ]]; then
+    echo "Error: Invalid chain '$chain'. Supported chains: bsc, bsc-testnet"
     usage
 fi
 
 # Get the corresponding block hash
-tip_block=$(get_block_hash "$block_number")
+tip_block=$(get_block_hash "$block_number" "$chain")
 
 # Create results directory if it doesn't exist
 mkdir -p ./test_results
@@ -118,23 +143,44 @@ mkdir -p ./test_results
 # Generate well-named result file
 timestamp=$(date +"%Y%m%d_%H%M%S")
 hostname=$(hostname -s)
-result_file="./test_results/bsc_mainnet_test_${block_number}_${timestamp}_${hostname}.log"
+network_name=$(echo "$chain" | sed 's/bsc-testnet/testnet/' | sed 's/bsc/mainnet/')
+result_file="./test_results/bsc_${network_name}_test_${block_number}_${timestamp}_${hostname}.log"
 
-echo "## Testing BSC mainnet block syncing for the first $block_number blocks"
+echo "## Testing BSC $network_name block syncing for the first $block_number blocks"
+echo "Chain: $chain"
 echo "Using tip block: $tip_block"
 echo "Starting at: $(date)"
 echo "Results will be saved to: $result_file"
 
+# Get git repository information
+git_remote_url=$(git remote get-url origin 2>/dev/null || echo "Unknown")
+git_branch=$(git branch --show-current 2>/dev/null || echo "Unknown")
+git_commit=$(git rev-parse HEAD 2>/dev/null || echo "Unknown")
+
+echo ""
+echo "Git Repository Information:"
+echo "Remote URL: $git_remote_url"
+echo "Current branch: $git_branch"
+echo "Commit hash: $git_commit"
+echo ""
+
 # Save initial info to result file
 {
-    echo "BSC Mainnet Test Results"
+    echo "BSC ${network_name^} Test Results"
     echo "========================"
     echo "Test started at: $(date)"
+    echo "Network: BSC $network_name"
+    echo "Chain parameter: $chain"
     echo "Block number: $block_number"
     echo "Tip block hash: $tip_block"
     echo "Hostname: $(hostname)"
     echo "OS: $(uname -s)"
     echo "Working directory: $(pwd)"
+    echo ""
+    echo "Git Repository Information:"
+    echo "Remote URL: $git_remote_url"
+    echo "Current branch: $git_branch"
+    echo "Commit hash: $git_commit"
     echo "========================"
     echo ""
 } > "$result_file"
@@ -156,7 +202,7 @@ fi
 start_time=$(date +%s)
 
 RUST_LOG=INFO ./target/release/reth-bsc node \
-    --chain=bsc \
+    --chain=$chain \
     --http --http.api="eth, net, txpool, web3, rpc" \
     --datadir ./fullnode_bsc/data --log.file.directory ./fullnode_bsc/logs \
     --trusted-peers=enode://551c8009f1d5bbfb1d64983eeb4591e51ad488565b96cdde7e40a207cfd6c8efa5b5a7fa88ed4e71229c988979e4c720891287ddd7d00ba114408a3ceb972ccb@34.245.203.3:30311,enode://c637c90d6b9d1d0038788b163a749a7a86fed2e7d0d13e5dc920ab144bb432ed1e3e00b54c1a93cecba479037601ba9a5937a88fe0be949c651043473c0d1e5b@34.244.120.206:30311,enode://bac6a548c7884270d53c3694c93ea43fa87ac1c7219f9f25c9d57f6a2fec9d75441bc4bad1e81d78c049a1c4daf3b1404e2bbb5cd9bf60c0f3a723bbaea110bc@3.255.117.110:30311,enode://94e56c84a5a32e2ef744af500d0ddd769c317d3c3dd42d50f5ea95f5f3718a5f81bc5ce32a7a3ea127bc0f10d3f88f4526a67f5b06c1d85f9cdfc6eb46b2b375@3.255.231.219:30311,enode://5d54b9a5af87c3963cc619fe4ddd2ed7687e98363bfd1854f243b71a2225d33b9c9290e047d738e0c7795b4bc78073f0eb4d9f80f572764e970e23d02b3c2b1f@34.245.16.210:30311,enode://41d57b0f00d83016e1bb4eccff0f3034aa49345301b7be96c6bb23a0a852b9b87b9ed11827c188ad409019fb0e578917d722f318665f198340b8a15ae8beff36@34.245.72.231:30311,enode://1bb269476f62e99d17da561b1a6b0d0269b10afee029e1e9fdee9ac6a0e342ae562dfa8578d783109b80c0f100a19e03b057f37b2aff22d8a0aceb62020018fe@54.78.102.178:30311,enode://3c13113538f3ca7d898d99f9656e0939451558758fd9c9475cff29f020187a56e8140bd24bd57164b07c3d325fc53e1ef622f793851d2648ed93d9d5a7ce975c@34.254.238.155:30311,enode://d19fd92e4f061d82a92e32d377c568494edcc36883a02e9d527b69695b6ae9e857f1ace10399c2aee4f71f5885ca3fe6342af78c71ad43ec1ca890deb6aaf465@34.247.29.116:30311,enode://c014bbf48209cdf8ca6d3bf3ff5cf2fade45104283dcfc079df6c64e0f4b65e4afe28040fa1731a0732bd9cbb90786cf78f0174b5de7bd5b303088e80d8e6a83@54.74.101.143:30311 \
@@ -175,7 +221,8 @@ seconds=$((duration % 60))
 # Prepare final summary
 final_summary=""
 final_summary+="================================================\n"
-final_summary+="Test block-syncing for BSC mainnet for the first $block_number blocks\n"
+final_summary+="Test block-syncing for BSC $network_name for the first $block_number blocks\n"
+final_summary+="Chain: $chain\n"
 if [ $minutes -gt 0 ]; then
     final_summary+="It takes $minutes mins $seconds secs\n"
 else
