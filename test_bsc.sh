@@ -2,18 +2,21 @@
 
 # Function to display usage
 usage() {
-    echo "Usage: $0 [-n <block_number>] [-c <chain>]"
+    echo "Usage: $0 [-n <block_number>] [-c <chain>] [-C] [-b]"
     echo "  -n: Specify the tip block number (default: 5M)"
     echo "      Examples: 500000, 0.5M, 1M, 5M, 10M, 100K, 2.5M"
     echo "      Supports: exact numbers, K/k for thousands, M/m for millions"
     echo "  -c: Specify the blockchain network (default: bsc)"
     echo "      Options: bsc (mainnet), bsc-testnet"
+    echo "  -C: Clean data and log directories before starting (default: keep existing data)"
+    echo "  -b: Build the project before running (default: skip build)"
     echo ""
     echo "Examples:"
-    echo "  $0                    # Test BSC mainnet with 5M blocks"
-    echo "  $0 -n 1M             # Test BSC mainnet with 1M blocks"
-    echo "  $0 -c bsc-testnet     # Test BSC testnet with 5M blocks"
-    echo "  $0 -n 2M -c bsc-testnet  # Test BSC testnet with 2M blocks"
+    echo "  $0                        # Test BSC mainnet with 5M blocks, keep data, skip build"
+    echo "  $0 -n 1M -b              # Test BSC mainnet with 1M blocks, build first"
+    echo "  $0 -C                    # Test BSC mainnet with 5M blocks, clean data first"
+    echo "  $0 -c bsc-testnet -C -b   # Test BSC testnet, clean data and build"
+    echo "  $0 -n 2M -c bsc-testnet   # Test BSC testnet with 2M blocks"
     exit 1
 }
 
@@ -110,14 +113,22 @@ get_block_hash() {
 # Parse command line arguments
 block_number="5M"  # Default to 5M blocks
 chain="bsc"        # Default to mainnet
+clean_data=false   # Default: keep existing data
+build_project=false # Default: skip build
 
-while getopts "n:c:h" opt; do
+while getopts "n:c:Cbh" opt; do
     case $opt in
         n)
             block_number="$OPTARG"
             ;;
         c)
             chain="$OPTARG"
+            ;;
+        C)
+            clean_data=true
+            ;;
+        b)
+            build_project=true
             ;;
         h)
             usage
@@ -149,6 +160,8 @@ result_file="./test_results/bsc_${network_name}_test_${block_number}_${timestamp
 echo "## Testing BSC $network_name block syncing for the first $block_number blocks"
 echo "Chain: $chain"
 echo "Using tip block: $tip_block"
+echo "Clean data: $clean_data"
+echo "Build project: $build_project"
 echo "Starting at: $(date)"
 echo "Results will be saved to: $result_file"
 
@@ -183,6 +196,8 @@ echo "Using data directory: ./$data_dir"
     echo "Data directory: ./$data_dir"
     echo "Block number: $block_number"
     echo "Tip block hash: $tip_block"
+    echo "Clean data: $clean_data"
+    echo "Build project: $build_project"
     echo "Hostname: $(hostname)"
     echo "OS: $(uname -s)"
     echo "Working directory: $(pwd)"
@@ -195,17 +210,31 @@ echo "Using data directory: ./$data_dir"
     echo ""
 } > "$result_file"
 
-rm -rf ./$data_dir
-cargo clean && cargo update 
-
-# Detect OS and build accordingly
-os=$(uname -s)
-if [ "$os" == "Darwin" ]; then
-    echo "Building for Darwin"
-    cargo build --bin reth-bsc --release
+# Clean data directory if requested
+if [ "$clean_data" = true ]; then
+    echo "Cleaning data directory: ./$data_dir"
+    rm -rf ./$data_dir
 else
-    echo "Building for Linux"
-    RUSTFLAGS='-C link-arg=-lgcc' cargo build --bin reth-bsc --release
+    echo "Keeping existing data directory: ./$data_dir"
+fi
+
+# Build project if requested
+if [ "$build_project" = true ]; then
+    echo "Building project..."
+    cargo clean && cargo update 
+    
+    # Detect OS and build accordingly
+    os=$(uname -s)
+    if [ "$os" == "Darwin" ]; then
+        echo "Building for Darwin"
+        cargo build --bin reth-bsc --release
+    else
+        echo "Building for Linux"
+        RUSTFLAGS='-C link-arg=-lgcc' cargo build --bin reth-bsc --release
+    fi
+    echo "Build completed."
+else
+    echo "Skipping build (using existing binary)"
 fi
 
 # Record start time
